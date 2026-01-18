@@ -1,0 +1,29 @@
+prometheus:
+  alertmanager:
+    enabled: false
+
+  prometheus-pushgateway:
+    enabled: false
+
+  server:
+    service:
+      type: ClusterIP
+
+    # Enable remote write receiver so Alloy can push metrics
+    extraFlags:
+      - "web.enable-remote-write-receiver"
+
+    # Persistent storage
+    persistentVolume:
+      enabled: true
+      storageClass: "gp2"
+      size: 10Gi
+
+    # Resource limits for lab environment
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
