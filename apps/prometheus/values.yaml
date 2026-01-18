@@ -7,7 +7,7 @@ prometheus:
 
   server:
     service:
-      type: ClusterIP
+      type: LoadBalancer
 
     # Enable remote write receiver so Alloy can push metrics
     extraFlags:
