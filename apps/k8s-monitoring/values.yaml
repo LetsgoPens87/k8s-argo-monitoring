@@ -2,6 +2,15 @@ k8s-monitoring:
   cluster:
     name: monitoring-lab
 
+  # Destinations - where to send telemetry
+  destinations:
+    - name: prometheus
+      type: prometheus
+      url: http://prometheus-server.monitoring.svc:80/api/v1/write
+    - name: loki
+      type: loki
+      url: http://loki.monitoring.svc:3100/loki/api/v1/push
+
   # Collectors - enable Alloy instances
   alloy-metrics:
     enabled: true
@@ -23,73 +32,3 @@ k8s-monitoring:
   # Feature: Cluster Events
   clusterEvents:
     enabled: true
-
-  # Prometheus - enabled with LoadBalancer
-  prometheus:
-    enabled: true
-    server:
-      service:
-        type: LoadBalancer
-      persistentVolume:
-        enabled: true
-        storageClass: gp2
-        size: 10Gi
-      extraFlags:
-        - "web.enable-remote-write-receiver"
-
-  # Loki - enabled
-  loki:
-    enabled: true
-    deploymentMode: SingleBinary
-    singleBinary:
-      replicas: 1
-      persistence:
-        enabled: true
-        storageClass: gp2
-        size: 10Gi
-    loki:
-      auth_enabled: false
-      commonConfig:
-        replication_factor: 1
-      storage:
-        type: filesystem
-    read:
-      replicas: 0
-    write:
-      replicas: 0
-    backend:
-      replicas: 0
-    gateway:
-      enabled: false
-    monitoring:
-      selfMonitoring:
-        enabled: false
-      lokiCanary:
-        enabled: false
-    test:
-      enabled: false
-
-  # Grafana - enabled with LoadBalancer and datasources
-  grafana:
-    enabled: true
-    service:
-      type: LoadBalancer
-    adminUser: admin
-    adminPassword: admin
-    persistence:
-      enabled: true
-      storageClassName: gp2
-      size: 5Gi
-    datasources:
-      datasources.yaml:
-        apiVersion: 1
-        datasources:
-          - name: Prometheus
-            type: prometheus
-            url: http://k8s-monitoring-prometheus-server:80
-            access: proxy
-            isDefault: true
-          - name: Loki
-            type: loki
-            url: http://k8s-monitoring-loki:3100
-            access: proxy
