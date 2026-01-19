@@ -5,8 +5,20 @@ metadata:
   namespace: mysql
 type: Opaque
 stringData:
-  # Connection string for the exporter (dedicated user with minimal privileges)
-  DATA_SOURCE_NAME: "exporter:exporterpassword@(mysql:3306)/"
+  # Password for the exporter user
+  MYSQLD_EXPORTER_PASSWORD: "exporterpassword"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-exporter-config
+  namespace: mysql
+data:
+  .my.cnf: |
+    [client]
+    user=exporter
+    host=mysql
+    port=3306
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -37,19 +49,23 @@ spec:
             - containerPort: 9104
               name: metrics
           env:
-            - name: DATA_SOURCE_NAME
+            - name: MYSQLD_EXPORTER_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: mysql-exporter-secret
-                  key: DATA_SOURCE_NAME
+                  key: MYSQLD_EXPORTER_PASSWORD
           args:
+            - --config.my-cnf=/etc/mysql-exporter/.my.cnf
             - --collect.info_schema.processlist
             - --collect.info_schema.innodb_metrics
-            - --collect.info_schema.query_response_time
             - --collect.global_status
             - --collect.global_variables
             - --collect.slave_status
             - --collect.engine_innodb_status
+          volumeMounts:
+            - name: config
+              mountPath: /etc/mysql-exporter
+              readOnly: true
           resources:
             requests:
               memory: "64Mi"
@@ -69,6 +85,10 @@ spec:
               port: 9104
             initialDelaySeconds: 5
             periodSeconds: 5
+      volumes:
+        - name: config
+          configMap:
+            name: mysql-exporter-config
 ---
 apiVersion: v1
 kind: Service
