@@ -211,7 +211,7 @@ def healthz():
 jobs: Dict[str, Dict] = {}
 # 2. Create a Job Run
 @app.post("/v1/jobs")
-def create_job(job_data: JobCreate):
+async def create_job(job_data: JobCreate, background_tasks: BackgroundTasks):
     job_id = str(uuid.uuid4())  # generate a unique ID
     job = {
         "id": job_id,
@@ -225,7 +225,7 @@ def create_job(job_data: JobCreate):
     jobs[job_id] = job
 
     # Schedule the async job execution
-    asyncio.create_task(run_job(job_id))
+    background_tasks.add_task(run_job, job_id)
 
     return {"job_id": job_id, "status": "created"}
 
