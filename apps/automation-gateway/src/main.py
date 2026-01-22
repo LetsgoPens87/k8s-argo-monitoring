@@ -178,6 +178,12 @@ class JobStatusResponse(BaseModel):
     finished_at: Optional[str]
     error: Optional[str]
 
+class JobCreate(BaseModel):
+    action: str
+    target: str
+    requested_by: str
+    parameters: Optional[Dict] = None
+
 # ---------------------------------------------------------------------------
 # FastAPI Application
 # ---------------------------------------------------------------------------
