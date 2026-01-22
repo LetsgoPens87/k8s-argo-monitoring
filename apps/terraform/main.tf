@@ -116,7 +116,7 @@ module "eks" {
   endpoint_public_access           = true
   enable_cluster_creator_admin_permissions = true
 
-  addons = {
+  cluster_addons = {
     eks-pod-identity-agent = {
       most_recent = true
     }
