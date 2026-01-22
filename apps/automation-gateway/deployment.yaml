@@ -57,7 +57,7 @@ spec:
     spec:
       containers:
         - name: automation-gateway
-          image: your-repo/your-image:latest
+          image: dhricko9/automation-gateway-api:latest
           ports:
             - containerPort: 80
               name: http
