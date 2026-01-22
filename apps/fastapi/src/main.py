@@ -185,17 +185,41 @@ def health():
     }
 
 
+from sqlalchemy.exc import ProgrammingError
+
 @app.get("/items")
 def get_items():
     """Get all items."""
     logger.info("Fetching all items")
-    try:
+
+    def run_query():
         db = SessionLocal()
         try:
             items = db.query(Item).all()
             return {"items": [{"id": i.id, "name": i.name, "description": i.description} for i in items]}
         finally:
             db.close()
+
+    try:
+        return run_query()
+
+    except ProgrammingError as e:
+        # MySQL table missing = error code 1146
+        orig = getattr(e, "orig", None)
+        code = getattr(orig, "args", [None])[0] if orig else None
+
+        if code == 1146:
+            logger.warning("Table missing, creating tables and retrying once")
+            try:
+                Base.metadata.create_all(bind=engine)
+                return run_query()
+            except Exception as retry_err:
+                logger.error(f"MySQL error after retry: {retry_err}")
+                raise HTTPException(status_code=503, detail="MySQL unavailable")
+
+        logger.error(f"MySQL ProgrammingError: {e}")
+        raise HTTPException(status_code=503, detail="MySQL unavailable")
+
     except Exception as e:
         logger.error(f"MySQL error: {e}")
         raise HTTPException(status_code=503, detail="MySQL unavailable")
