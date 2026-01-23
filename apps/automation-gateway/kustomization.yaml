@@ -6,4 +6,4 @@ resources:
 images:
   - name: dhricko9/automation-gateway
 
-    newTag: v1.0.0
+    newTag: v1.0.3
