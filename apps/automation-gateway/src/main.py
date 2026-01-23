@@ -100,6 +100,7 @@ class Item(Base):
 # Redis Configuration
 # ---------------------------------------------------------------------------
 
+# Redis is very important
 def get_redis_client() -> redis.Redis:
     """Create Redis client with settings."""
     return redis.Redis(
