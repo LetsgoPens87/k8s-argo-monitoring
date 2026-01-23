@@ -100,7 +100,7 @@ class Item(Base):
 # Redis Configuration
 # ---------------------------------------------------------------------------
 
-# Redis is very important
+# Redis is very important and needs to be configured for shared memory to work.
 def get_redis_client() -> redis.Redis:
     """Create Redis client with settings."""
     return redis.Redis(

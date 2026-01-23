@@ -1,13 +1,13 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: default
+  name: automation-gateway
 ---
 apiVersion: v1
 kind: Secret
 metadata:
   name: automation-gateway-secret
-  namespace: default
+  namespace: automation-gateway
 type: Opaque
 stringData:
   MYSQL_USER: "appuser"
@@ -18,7 +18,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: automation-gateway-config
-  namespace: default
+  namespace: automation-gateway
 data:
   MYSQL_HOST: "mysql.mysql.svc.cluster.local"
   MYSQL_PORT: "3306"
@@ -26,10 +26,11 @@ data:
   REDIS_HOST: "redis.redis.svc.cluster.local"
   REDIS_PORT: "6379"
   # OpenTelemetry Configuration
-  OTEL_SERVICE_NAME: "automation-gateway"
+  OTEL_SERVICE_NAME: "automation-gateway-app"
   OTEL_TRACES_EXPORTER: "otlp"
   OTEL_METRICS_EXPORTER: "none"
   OTEL_LOGS_EXPORTER: "none"
+  # Tempo standalone OTLP endpoint (using HTTP protocol on port 4318)
   OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://tempo.tempo.svc.cluster.local:4318/v1/traces"
   OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf"
   OTEL_PYTHON_LOG_CORRELATION: "true"
@@ -38,7 +39,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: automation-gateway
-  namespace: default
+  namespace: automation-gateway
   labels:
     app: automation-gateway
 spec:
@@ -52,12 +53,13 @@ spec:
         app: automation-gateway
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "8000"  # updated to match app port
+        prometheus.io/port: "8000"
         prometheus.io/path: "/metrics"
     spec:
       containers:
         - name: automation-gateway
-          image: dhricko9/automation-gateway-api:latest
+          image: danblanco/automation-gateway:v1.0.0  # Replace with your registry image
+          imagePullPolicy: Always
           ports:
             - containerPort: 8000
               name: http
@@ -92,24 +94,23 @@ apiVersion: v1
 kind: Service
 metadata:
   name: automation-gateway
-  namespace: default
+  namespace: automation-gateway
   labels:
     app: automation-gateway
 spec:
   type: ClusterIP
   ports:
-    - port: 80
+    - port: 8000
       targetPort: 8000
       name: http
   selector:
     app: automation-gateway
 ---
-# Optional LoadBalancer service
 apiVersion: v1
 kind: Service
 metadata:
   name: automation-gateway-lb
-  namespace: default
+  namespace: automation-gateway
   labels:
     app: automation-gateway
 spec:
@@ -121,12 +122,12 @@ spec:
   selector:
     app: automation-gateway
 ---
-# Prometheus ServiceMonitor
+# ServiceMonitor for Prometheus Operator
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: automation-gateway
-  namespace: default
+  namespace: automation-gateway
   labels:
     app: automation-gateway
     release: prometheus
@@ -140,4 +141,4 @@ spec:
       path: /metrics
   namespaceSelector:
     matchNames:
-      - default
+      - automation-gateway
