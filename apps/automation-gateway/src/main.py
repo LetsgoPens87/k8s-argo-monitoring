@@ -1,201 +1,173 @@
 """
-FastAPI application with OpenTelemetry auto-instrumentation support.
-
-Run with: opentelemetry-instrument uvicorn main:app --host 0.0.0.0 --port 8000
 """
 
 import logging
 import os
-import random
-import time
-from typing import Optional
+import subprocess
+from typing import Optional, Dict
 
-import redis
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException
 from prometheus_fastapi_instrumentator import Instrumentator
-from pydantic_settings import BaseSettings
-from sqlalchemy import Column, Integer, String, create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
 from prometheus_client import Counter, Histogram, Gauge
-from typing import Dict
 import uuid
 from datetime import datetime
-import asyncio
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # ---------------------------------------------------------------------------
-# Configuration via Environment Variables
+# Configuration and Setup
 # ---------------------------------------------------------------------------
 
-class Settings(BaseSettings):
-    """Application settings loaded from environment variables."""
-    
-    # MySQL
-    mysql_host: str = "mysql"
-    mysql_port: int = 3306
-    mysql_user: str = "root"
-    mysql_password: str = "rootpassword"
-    mysql_database: str = "testdb"
-    
-    # Redis
-    redis_host: str = "redis"
-    redis_port: int = 6379
-    redis_password: Optional[str] = None
-    
-    @property
-    def database_url(self) -> str:
-        return f"mysql+pymysql://{self.mysql_user}:{self.mysql_password}@{self.mysql_host}:{self.mysql_port}/{self.mysql_database}"
-    
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-
-
-settings = Settings()
-
-
-# ---------------------------------------------------------------------------
-# Logging Configuration (OTel-safe)
-# ---------------------------------------------------------------------------
-
-class OTelSafeFormatter(logging.Formatter):
-    """Formatter that safely includes OTel trace context if available."""
-    
-    def format(self, record):
-        # Add default values for OTel fields if not present
-        if not hasattr(record, 'otelTraceID'):
-            record.otelTraceID = '0'
-        if not hasattr(record, 'otelSpanID'):
-            record.otelSpanID = '0'
-        return super().format(record)
+# Ansible working directory
+ANSIBLE_BASE_DIR = "/home/ec2-user/ansible-zos"
+ANSIBLE_DIR = os.path.join(ANSIBLE_BASE_DIR, "ansible")
 
 # Configure logging
-handler = logging.StreamHandler()
-handler.setFormatter(OTelSafeFormatter(
-    '%(asctime)s - %(levelname)s - %(name)s - [trace_id=%(otelTraceID)s span_id=%(otelSpanID)s] - %(message)s'
-))
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("automation-gateway")
 
-logging.basicConfig(level=logging.INFO, handlers=[handler])
-logger = logging.getLogger("fastapi-app")
+# Prometheus metrics for Ansible playbooks
+playbook_executions_total = Counter(
+    "playbook_executions_total",
+    "Total number of playbook executions",
+    ["playbook", "status"]
+)
 
-# ---------------------------------------------------------------------------
-# MySQL Configuration
-# ---------------------------------------------------------------------------
+playbook_execution_duration_seconds = Histogram(
+    "playbook_execution_duration_seconds",
+    "Duration of playbook execution in seconds",
+    ["playbook"]
+)
 
-engine = create_engine(settings.database_url, pool_pre_ping=True)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+playbook_queue_depth = Gauge(
+    "playbook_queue_depth",
+    "Number of playbooks currently executing or queued"
+)
 
-
-class Item(Base):
-    __tablename__ = "items"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(100), nullable=False)
-    description = Column(String(500))
-
-
-# ---------------------------------------------------------------------------
-# Redis Configuration
-# ---------------------------------------------------------------------------
-
-# Redis is very important and needs to be configured for shared memory to work.
-def get_redis_client() -> redis.Redis:
-    """Create Redis client with settings."""
-    return redis.Redis(
-        host=settings.redis_host,
-        port=settings.redis_port,
-        password=settings.redis_password or None,
-        decode_responses=True
+# Request/Response models
+class PlaybookExecutionRequest(BaseModel):
+    """Request to execute an Ansible playbook"""
+    playbook: str = Field(
+        default="create_hamlet_jcl.yml",
+        description="Name of the playbook file to execute"
+    )
+    inventory: str = Field(
+        default="inventory.yml",
+        description="Inventory file to use"
+    )
+    extra_vars: Optional[Dict] = Field(
+        default=None,
+        description="Extra variables to pass to the playbook"
     )
 
-# A) Job counter
-automation_jobs_total = Counter(
-    "automation_jobs_total",
-    "Count of automation jobs by action and status",
-    ["action", "status"]
-)
+class PlaybookExecutionResponse(BaseModel):
+    """Response from playbook execution"""
+    execution_id: str
+    playbook: str
+    success: bool
+    exit_code: int
+    stdout: str
+    stderr: str
+    started_at: str
+    finished_at: str
+    duration_seconds: float
 
-# B) Job duration histogram
-automation_job_duration_seconds = Histogram(
-    "automation_job_duration_seconds",
-    "Duration of automation jobs in seconds",
-    ["action"]
-)
-
-# C) Queue depth gauge
-automation_job_queue_depth = Gauge(
-    "automation_job_queue_depth",
-    "Number of jobs currently in PENDING or RUNNING state"
-)
-
-async def run_job(job_id: str):
-    job = jobs[job_id]
-    job["status"] = "RUNNING"
-    job["started_at"] = datetime.utcnow().isoformat()
-
-    # Increment queue depth
-    automation_job_queue_depth.inc()
-
-    try:
-        await asyncio.sleep(random.uniform(1, 3))
-        if random.random() < 0.1:
-            raise Exception("Simulated failure")
-        job["status"] = "SUCCESS"
-        # Increment success counter
-        automation_jobs_total.labels(action=job["action"], status="SUCCESS").inc()
-    except Exception as e:
-        job["status"] = "FAILED"
-        job["error"] = str(e)
-        # Increment failed counter
-        automation_jobs_total.labels(action=job["action"], status="FAILED").inc()
-    finally:
-        job["finished_at"] = datetime.utcnow().isoformat()
-        # Decrement queue depth
-        automation_job_queue_depth.dec()
-
-        # Record duration
-        duration = (datetime.fromisoformat(job["finished_at"]) - datetime.fromisoformat(job["started_at"])).total_seconds()
-        automation_job_duration_seconds.labels(action=job["action"]).observe(duration)
-
-# Request models
-class JobRequest(BaseModel):
-    action: str
-    target: str
-    requested_by: str
-    parameters: Optional[Dict] = None
-
-class JobResponse(BaseModel):
-    job_id: str
+class HealthResponse(BaseModel):
+    """Health check response"""
     status: str
+    ansible_dir: str
+    ansible_available: bool
 
-class JobStatusResponse(BaseModel):
-    job_id: str
-    action: str
-    target: str
-    status: str
-    started_at: Optional[str]
-    finished_at: Optional[str]
-    error: Optional[str]
-
-class JobCreate(BaseModel):
-    action: str
-    target: str
-    requested_by: str
-    parameters: Optional[Dict] = None
 
 # ---------------------------------------------------------------------------
-# FastAPI Application
+# Playbook Execution Logic
+# ---------------------------------------------------------------------------
+
+async def execute_playbook(request: PlaybookExecutionRequest) -> PlaybookExecutionResponse:
+    """Execute an Ansible playbook and capture output"""
+    execution_id = str(uuid.uuid4())
+    started_at = datetime.utcnow().isoformat()
+    
+    playbook_queue_depth.inc()
+    
+    try:
+        # Validate playbook exists
+        playbook_path = os.path.join(ANSIBLE_DIR, request.playbook)
+        if not os.path.exists(playbook_path):
+            raise ValueError(f"Playbook '{request.playbook}' not found in {ANSIBLE_DIR}")
+        
+        # Validate inventory exists
+        inventory_path = os.path.join(ANSIBLE_DIR, request.inventory)
+        if not os.path.exists(inventory_path):
+            raise ValueError(f"Inventory '{request.inventory}' not found in {ANSIBLE_DIR}")
+        
+        # Build command
+        command = [
+            "ansible-playbook",
+            "-i", request.inventory,
+            request.playbook
+        ]
+        
+        # Add extra vars if provided
+        if request.extra_vars:
+            extra_vars_str = " ".join([f"{k}={v}" for k, v in request.extra_vars.items()])
+            command.extend(["-e", extra_vars_str])
+        
+        logger.info(f"[{execution_id}] Running playbook: {request.playbook} with inventory: {request.inventory}")
+        logger.debug(f"[{execution_id}] Command: {' '.join(command)}")
+        
+        # Execute playbook
+        result = subprocess.run(
+            command,
+            cwd=ANSIBLE_DIR,
+            capture_output=True,
+            text=True,
+            timeout=1800  # 30 minute timeout
+        )
+        
+        finished_at = datetime.utcnow().isoformat()
+        success = result.returncode == 0
+        duration = (datetime.fromisoformat(finished_at) - datetime.fromisoformat(started_at)).total_seconds()
+        
+        # Record metrics
+        status = "success" if success else "failed"
+        playbook_executions_total.labels(playbook=request.playbook, status=status).inc()
+        playbook_execution_duration_seconds.labels(playbook=request.playbook).observe(duration)
+        
+        logger.info(f"[{execution_id}] Playbook execution completed with status: {status} (duration: {duration:.2f}s)")
+        
+        return PlaybookExecutionResponse(
+            execution_id=execution_id,
+            playbook=request.playbook,
+            success=success,
+            exit_code=result.returncode,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_seconds=duration
+        )
+    
+    except subprocess.TimeoutExpired:
+        logger.error(f"[{execution_id}] Playbook execution timed out after 30 minutes")
+        raise ValueError("Playbook execution timed out after 30 minutes")
+    except Exception as e:
+        logger.error(f"[{execution_id}] Error executing playbook: {str(e)}")
+        raise
+    finally:
+        playbook_queue_depth.dec()
+
+# ---------------------------------------------------------------------------
+# FastAPI Application Setup
 # ---------------------------------------------------------------------------
 
 app = FastAPI(
-    title="Telemetry API",
-    description="FastAPI with OpenTelemetry auto-instrumentation",
+    title="Ansible Automation Gateway",
+    description="FastAPI service for executing Ansible playbooks with OpenTelemetry instrumentation",
     version="1.0.0"
 )
 
-# Prometheus metrics
+# Prometheus metrics instrumentation
 Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 
 
@@ -203,285 +175,147 @@ Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 # Startup Events
 # ---------------------------------------------------------------------------
 
-# 1. Health endpoint
-@app.get("/healthz")
-def healthz():
-    return {"status": "ok"}
-
-# In-memory job store
-jobs: Dict[str, Dict] = {}
-# 2. Create a Job Run
-@app.post("/v1/jobs")
-async def create_job(job_data: JobCreate):
-    job_id = str(uuid.uuid4())
-    job = {
-        "id": job_id,
-        "action": job_data.action,
-        "target": job_data.target,
-        "requested_by": job_data.requested_by,
-        "parameters": json.dumps(job_data.parameters),  # store as JSON string
-        "status": "PENDING",
-        "created_at": datetime.utcnow().isoformat()
-    }
-
-    r = get_redis_client()
-    # Store the job info as a Redis hash
-    r.hset(f"job:{job_id}", mapping=job)
-
-    # Enqueue the job for processing
-    r.lpush("job_queue", job_id)
-
-    return {"job_id": job_id, "status": "enqueued"}
-
-# 3. Get Job Status
-@app.get("/v1/jobs/{job_id}")
-def get_job_status(job_id: str):
-    r = get_redis_client()
-    job_data = r.hgetall(f"job:{job_id}")
-    if not job_data:
-        raise HTTPException(status_code=404, detail="Job not found")
-    # Convert bytes to str
-    job_data = {k.decode(): v.decode() for k, v in job_data.items()}
-    # Parse parameters JSON if needed
-    if "parameters" in job_data:
-        job_data["parameters"] = json.loads(job_data["parameters"])
-    return job_data
-
 @app.on_event("startup")
 async def startup():
-    """Initialize database and test connections."""
-    logger.info("Starting application...")
+    """Initialize and validate Ansible environment"""
+    logger.info("Starting Automation Gateway...")
     
-    # Test MySQL connection and create tables if available
+    # Check Ansible directory
+    if not os.path.isdir(ANSIBLE_DIR):
+        logger.warning(f"Ansible directory not found: {ANSIBLE_DIR}")
+    else:
+        logger.info(f"Ansible directory: {ANSIBLE_DIR}")
+        playbooks = [f for f in os.listdir(ANSIBLE_DIR) if f.endswith('.yml')]
+        logger.info(f"Found {len(playbooks)} playbooks")
+    
+    # Check ansible-playbook command availability
     try:
-        Base.metadata.create_all(bind=engine)
-        logger.info("MySQL tables created")
-        with engine.connect() as conn:
-            conn.exec_driver_sql("SELECT 1")
-        logger.info("MySQL connection successful")
-    except Exception as e:
-        logger.warning(f"MySQL not available at startup (will retry on requests): {e}")
+        result = subprocess.run(
+            ["ansible-playbook", "--version"],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode == 0:
+            logger.info("ansible-playbook is available")
+        else:
+            logger.warning("ansible-playbook command failed")
+    except FileNotFoundError:
+        logger.warning("ansible-playbook command not found in PATH")
     
-    # Test Redis connection
-    try:
-        r = get_redis_client()
-        r.ping()
-        logger.info("Redis connection successful")
-    except Exception as e:
-        logger.warning(f"Redis not available at startup (will retry on requests): {e}")
-    
-    logger.info("Application started - endpoints ready")
+    logger.info("Automation Gateway startup complete")
 
 
 # ---------------------------------------------------------------------------
-# Routes
+# API Endpoints
 # ---------------------------------------------------------------------------
+
+@app.get("/health", response_model=HealthResponse)
+async def health_check():
+    """Health check endpoint with Ansible availability status"""
+    ansible_available = False
+    try:
+        result = subprocess.run(
+            ["ansible-playbook", "--version"],
+            capture_output=True,
+            timeout=5
+        )
+        ansible_available = result.returncode == 0
+    except:
+        ansible_available = False
+    
+    return HealthResponse(
+        status="healthy",
+        ansible_dir=ANSIBLE_DIR,
+        ansible_available=ansible_available
+    )
+
+
+@app.post("/playbooks/execute", response_model=PlaybookExecutionResponse)
+async def execute(request: PlaybookExecutionRequest = PlaybookExecutionRequest()):
+    """
+    Execute an Ansible playbook and return the output.
+    
+    Default execution: POST /playbooks/execute with empty body executes create_hamlet_jcl.yml
+    """
+    try:
+        response = await execute_playbook(request)
+        return response
+    except ValueError as e:
+        logger.error(f"Validation error: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Execution error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error executing playbook: {str(e)}")
+
+
+@app.get("/playbooks/available")
+async def list_available_playbooks():
+    """List all available playbooks in the Ansible directory"""
+    try:
+        if not os.path.isdir(ANSIBLE_DIR):
+            raise HTTPException(
+                status_code=404,
+                detail=f"Ansible directory not found: {ANSIBLE_DIR}"
+            )
+        
+        playbooks = [f for f in os.listdir(ANSIBLE_DIR) if f.endswith('.yml')]
+        return {
+            "directory": ANSIBLE_DIR,
+            "count": len(playbooks),
+            "playbooks": sorted(playbooks)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing playbooks: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error listing playbooks: {str(e)}")
+
+
+@app.get("/playbooks/{playbook_name}")
+async def get_playbook_info(playbook_name: str):
+    """Get information about a specific playbook"""
+    playbook_path = os.path.join(ANSIBLE_DIR, playbook_name)
+    
+    if not os.path.exists(playbook_path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Playbook '{playbook_name}' not found"
+        )
+    
+    try:
+        with open(playbook_path, 'r') as f:
+            content = f.read()
+        
+        return {
+            "name": playbook_name,
+            "path": playbook_path,
+            "exists": True,
+            "size_bytes": os.path.getsize(playbook_path),
+            "content": content[:1000] + "..." if len(content) > 1000 else content
+        }
+    except Exception as e:
+        logger.error(f"Error reading playbook: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error reading playbook: {str(e)}")
+
 
 @app.get("/")
-def root():
-    """Health check endpoint."""
-    logger.info("Health check requested")
-    return {"status": "healthy", "service": "fastapi-app"}
-
-
-@app.get("/health")
-def health():
-    """Detailed health check."""
-    # Check MySQL
-    try:
-        with engine.connect() as conn:
-            conn.exec_driver_sql("SELECT 1")
-        mysql_status = "connected"
-    except Exception:
-        mysql_status = "disconnected"
-    
-    # Check Redis
-    try:
-        r = get_redis_client()
-        r.ping()
-        redis_status = "connected"
-    except Exception:
-        redis_status = "disconnected"
-    
+async def root():
+    """Welcome endpoint with API documentation links"""
     return {
-        "status": "healthy",
-        "mysql": mysql_status,
-        "redis": redis_status
+        "service": "Ansible Automation Gateway",
+        "version": "1.0.0",
+        "documentation": "/docs",
+        "redoc": "/redoc",
+        "metrics": "/metrics",
+        "endpoints": {
+            "health": "GET /health",
+            "execute_playbook": "POST /playbooks/execute",
+            "list_playbooks": "GET /playbooks/available",
+            "playbook_info": "GET /playbooks/{playbook_name}"
+        }
     }
 
 
-@app.get("/items")
-def get_items():
-    """Get all items."""
-    logger.info("Fetching all items")
-    try:
-        db = SessionLocal()
-        try:
-            items = db.query(Item).all()
-            return {"items": [{"id": i.id, "name": i.name, "description": i.description} for i in items]}
-        finally:
-            db.close()
-    except Exception as e:
-        logger.error(f"MySQL error: {e}")
-        raise HTTPException(status_code=503, detail="MySQL unavailable")
-
-
-@app.get("/items/{item_id}")
-def get_item(item_id: int):
-    """Get a single item by ID."""
-    logger.debug(f"Looking up item: {item_id}")
-    try:
-        db = SessionLocal()
-        try:
-            item = db.query(Item).filter(Item.id == item_id).first()
-            if not item:
-                logger.warning(f"Item not found: {item_id}")
-                raise HTTPException(status_code=404, detail="Item not found")
-            return {"id": item.id, "name": item.name, "description": item.description}
-        finally:
-            db.close()
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"MySQL error: {e}")
-        raise HTTPException(status_code=503, detail="MySQL unavailable")
-
-
-@app.post("/items")
-def create_item(name: str, description: str = ""):
-    """Create a new item."""
-    logger.info(f"Creating item: {name}")
-    try:
-        db = SessionLocal()
-        try:
-            item = Item(name=name, description=description)
-            db.add(item)
-            db.commit()
-            db.refresh(item)
-            return {"id": item.id, "name": item.name, "description": item.description}
-        finally:
-            db.close()
-    except Exception as e:
-        logger.error(f"MySQL error: {e}")
-        raise HTTPException(status_code=503, detail="MySQL unavailable")
-
-
-@app.get("/slow")
-def slow_endpoint():
-    """Intentionally slow endpoint for testing latency."""
-    delay = random.uniform(1.0, 3.0)
-    logger.warning(f"Slow endpoint called, sleeping {delay:.2f}s")
-    time.sleep(delay)
-    return {"message": "Done", "delay": f"{delay:.2f}s"}
-
-
-@app.get("/error")
-def error_endpoint():
-    """Always fails - for testing error tracking."""
-    logger.error("Error endpoint called - intentional failure")
-    raise HTTPException(status_code=500, detail="Intentional error")
-
-
-@app.get("/random")
-def random_endpoint():
-    """Generate random log levels."""
-    level = random.choice(["debug", "info", "warning", "error"])
-    
-    if level == "debug":
-        logger.debug("Random debug message")
-    elif level == "info":
-        logger.info("Random info message")
-    elif level == "warning":
-        logger.warning("Random warning message")
-    else:
-        logger.error("Random error message")
-    
-    return {"log_level": level}
-
-
-# ---------------------------------------------------------------------------
-# Redis Endpoints
-# ---------------------------------------------------------------------------
-
-@app.get("/cache/{key}")
-def cache_get(key: str):
-    """Get a value from Redis cache."""
-    logger.info(f"Cache GET: {key}")
-    try:
-        r = get_redis_client()
-        value = r.get(key)
-        if value is None:
-            logger.debug(f"Cache MISS: {key}")
-            raise HTTPException(status_code=404, detail="Key not found")
-        logger.debug(f"Cache HIT: {key}")
-        return {"key": key, "value": value}
-    except HTTPException:
-        raise
-    except (redis.RedisError, redis.ConnectionError) as e:
-        logger.error(f"Redis unavailable: {e}")
-        raise HTTPException(status_code=503, detail="Redis unavailable")
-
-
-@app.post("/cache/{key}")
-def cache_set(key: str, value: str, ttl: int = 300):
-    """Set a value in Redis cache with optional TTL (default 5 minutes)."""
-    logger.info(f"Cache SET: {key}={value} (TTL: {ttl}s)")
-    try:
-        r = get_redis_client()
-        r.setex(key, ttl, value)
-        return {"key": key, "value": value, "ttl": ttl}
-    except (redis.RedisError, redis.ConnectionError) as e:
-        logger.error(f"Redis unavailable: {e}")
-        raise HTTPException(status_code=503, detail="Redis unavailable")
-
-
-@app.delete("/cache/{key}")
-def cache_delete(key: str):
-    """Delete a key from Redis cache."""
-    logger.info(f"Cache DELETE: {key}")
-    try:
-        r = get_redis_client()
-        deleted = r.delete(key)
-        if deleted == 0:
-            raise HTTPException(status_code=404, detail="Key not found")
-        return {"deleted": key}
-    except HTTPException:
-        raise
-    except (redis.RedisError, redis.ConnectionError) as e:
-        logger.error(f"Redis unavailable: {e}")
-        raise HTTPException(status_code=503, detail="Redis unavailable")
-
-
-@app.post("/cache/counter/{key}")
-def cache_increment(key: str, amount: int = 1):
-    """Increment a counter in Redis."""
-    logger.info(f"Cache INCR: {key} by {amount}")
-    try:
-        r = get_redis_client()
-        new_value = r.incrby(key, amount)
-        return {"key": key, "value": new_value}
-    except (redis.RedisError, redis.ConnectionError) as e:
-        logger.error(f"Redis unavailable: {e}")
-        raise HTTPException(status_code=503, detail="Redis unavailable")
-
-
-@app.get("/cache/stats")
-def cache_stats():
-    """Get Redis server stats."""
-    logger.info("Fetching Redis stats")
-    try:
-        r = get_redis_client()
-        info = r.info("stats")
-        return {
-            "total_connections": info.get("total_connections_received", 0),
-            "total_commands": info.get("total_commands_processed", 0),
-            "keyspace_hits": info.get("keyspace_hits", 0),
-            "keyspace_misses": info.get("keyspace_misses", 0),
-            "hit_rate": round(
-                info.get("keyspace_hits", 0) / 
-                max(info.get("keyspace_hits", 0) + info.get("keyspace_misses", 0), 1) * 100, 2
-            )
-        }
-    except (redis.RedisError, redis.ConnectionError) as e:
-        logger.error(f"Redis unavailable: {e}")
-        raise HTTPException(status_code=503, detail="Redis unavailable")
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

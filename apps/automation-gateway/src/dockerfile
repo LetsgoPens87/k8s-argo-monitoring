@@ -9,10 +9,10 @@ RUN pip install --no-cache-dir -r requirements.txt && \
 
 # Copy application
 COPY main.py .
-COPY run.sh .
-RUN chmod +x run.sh
+#COPY run.sh .
+#RUN chmod +x run.sh
 
 EXPOSE 8000
 
 # Run with OpenTelemetry auto-instrumentation
-CMD ["./run.sh"]
+#CMD ["./run.sh"]
