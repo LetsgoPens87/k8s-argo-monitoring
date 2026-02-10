@@ -3,4 +3,3 @@ uvicorn[standard]
 boto3>=1.26.0
 python-dotenv
 ansible-core>=2.12.0
-ibm-zos-core>=1.0.0
