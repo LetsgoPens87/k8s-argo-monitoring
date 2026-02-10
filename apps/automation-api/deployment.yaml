@@ -18,7 +18,18 @@ data:
       _TAG_REDIR_IN: "txt"
       _TAG_REDIR_OUT: "txt"
       LANG: "C"
-      PYTHONSTDINENCODING: "cp1047"  
+      PYTHONSTDINENCODING: "cp1047"
+  inventory.yml: | 
+    all:
+    children:
+      zos:
+        hosts:
+          mainframe:
+            ansible_host: 67.217.62.83
+        vars:
+          ansible_user: GAMA12
+          ansible_ssh_private_key_file: /home/ec2-user/mainframe_key.pem
+          ansible_python_interpreter: /usr/lpp/IBM/cyp/v3r11/pyz/bin/python    
 ---
 apiVersion: apps/v1
 kind: Deployment
