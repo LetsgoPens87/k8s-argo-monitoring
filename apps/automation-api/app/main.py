@@ -19,10 +19,43 @@ app = FastAPI(title="Automation Control Plane - Ansible Runner")
 S3_BUCKET = "ansible-playbook-s3-dae"
 s3_client = boto3.client('s3')
 
+# Install Ansible Collections on startup
+def install_ansible_collections():
+    """Install required Ansible collections"""
+    collections = [
+        "ibm.zos",
+        "community.general",
+        "ansible.posix"
+    ]
+    
+    for collection in collections:
+        try:
+            logger.info(f"Checking Ansible collection: {collection}")
+            result = subprocess.run(
+                ["ansible-galaxy", "collection", "install", collection, "--upgrade"],
+                capture_output=True,
+                text=True,
+                timeout=300
+            )
+            if result.returncode == 0:
+                logger.info(f"Successfully installed/updated collection: {collection}")
+            else:
+                logger.warning(f"Warning installing {collection}: {result.stderr}")
+        except Exception as e:
+            logger.error(f"Error installing collection {collection}: {str(e)}")
 
+# Health Endpoint
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Install required Ansible collections on startup"""
+    logger.info("Starting up - installing Ansible collections...")
+    install_ansible_collections()
+    logger.info("Startup complete - collections installed")
 
 
 def download_from_s3(bucket: str, s3_path: str, local_path: str) -> bool:
@@ -90,7 +123,7 @@ async def execute_ansible_playbook(
         logger.error(f"[{execution_id}] Error executing playbook: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Playbook execution failed: {str(e)}")
 
-
+# JCL Endpoint
 @app.post("/run-jcl")
 async def run_jcl(
     playbook_name: str = "ansible/create_hamlet_jcl.yml",
