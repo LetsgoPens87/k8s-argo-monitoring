@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: automation-api
+  namespace: automation
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: automation-api
+  template:
+    metadata:
+      labels:
+        app: automation-api
+    spec:
+      containers:
+      - name: api
+        image: python:3.11-slim
+        command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+        workingDir: /app
+        volumeMounts:
+        - name: code
+          mountPath: /app/app
+        ports:
+        - containerPort: 8000
+      volumes:
+      - name: code
+        configMap:
+          name: automation-api-code
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: automation-api-code
+  namespace: automation
+data:
+  main.py: |-
+    # paste the content of main.py above here

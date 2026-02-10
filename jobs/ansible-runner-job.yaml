@@ -1,0 +1,22 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: run-jcl-
+  namespace: automation
+spec:
+  template:
+    spec:
+      containers:
+      - name: runner
+        image: ghcr.io/owitness/ansible-runner-barebones:0.1
+        env:
+        - name: JCL_FILE
+          value: "hello.jcl"
+        volumeMounts:
+        - name: ansible-data
+          mountPath: /runner
+      restartPolicy: Never
+      volumes:
+      - name: ansible-data
+        configMap:
+          name: ansible-content   # you'll create this ConfigMap later
