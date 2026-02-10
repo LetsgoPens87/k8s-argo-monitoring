@@ -2,8 +2,8 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - deployment.yaml
+  - service.yaml
   - image-updater.yaml
 images:
-  - name: dhricko9/automation-gateway
-
-    newTag: v1.0.4
+  - name: dhricko9/automation-api
+    newTag: v1.0.13
