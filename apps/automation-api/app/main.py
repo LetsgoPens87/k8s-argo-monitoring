@@ -21,60 +21,10 @@ app = FastAPI(title="Automation Control Plane - Ansible Runner")
 S3_BUCKET = "ansible-playbook-s3-dae"
 s3_client = boto3.client('s3')
 
-def is_collection_installed(collection_name):
-    try:
-        result = subprocess.run(
-            ["ansible-galaxy", "collection", "list"],
-            capture_output=True,
-            text=True,
-            timeout=60
-        )
-        output = result.stdout
-        # Check if collection name appears in output
-        return collection_name in output
-    except Exception as e:
-        logger.error(f"Error checking collections: {str(e)}")
-        return False
-
-def install_ansible_collections():
-    collections = [
-        "ibm.ibm_zos_core",
-        "community.general",
-        "ansible.posix"
-    ]
-    for collection in collections:
-        try:
-            if is_collection_installed(collection):
-                logger.info(f"Collection '{collection}' already installed.")
-                continue
-            logger.info(f"Installing collection: {collection}")
-            result = subprocess.run(
-                ["ansible-galaxy", "collection", "install", collection, "--upgrade"],
-                capture_output=True,
-                text=True,
-                timeout=300
-            )
-            logger.info(f"stdout: {result.stdout}")
-            logger.info(f"stderr: {result.stderr}")
-            if result.returncode == 0:
-                logger.info(f"Successfully installed {collection}")
-            else:
-                logger.warning(f"Failed to install {collection}: {result.stderr}")
-        except Exception as e:
-            logger.error(f"Error installing {collection}: {str(e)}")
-
 # Health Endpoint
 @app.get("/health")
 async def health():
     return {"status": "ok"}
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Install required Ansible collections on startup"""
-    logger.info("Starting up - installing Ansible collections...")
-    install_ansible_collections()
-    logger.info("Startup complete - collections installed")
 
 
 def download_from_s3(bucket: str, s3_path: str, local_path: str) -> bool:
@@ -88,87 +38,18 @@ def download_from_s3(bucket: str, s3_path: str, local_path: str) -> bool:
         logger.error(f"Error downloading from S3: {str(e)}")
         raise
 
-
-def render_jinja2_variables(variables: Dict) -> Dict:
-    """
-    Render Jinja2 templates in variable values using other variables in the dict.
-    Handles nested dictionaries and lists recursively.
-    """
-    try:
-        logger.info("Rendering Jinja2 templates in variables")
-        
-        # Create a Jinja2 environment
-        jinja_env = Environment(loader=BaseLoader())
-        
-        def process_value(value, context):
-            """Recursively process values to render Jinja2 expressions"""
-            if isinstance(value, str):
-                try:
-                    # Check if string contains Jinja2 expressions
-                    if "{{" in value or "{%" in value:
-                        template = jinja_env.from_string(value)
-                        rendered = template.render(context)
-                        logger.debug(f"Rendered: {value} → {rendered}")
-                        return rendered
-                    return value
-                except Exception as e:
-                    logger.warning(f"Failed to render template '{value}': {str(e)}")
-                    return value
-            elif isinstance(value, dict):
-                return {k: process_value(v, context) for k, v in value.items()}
-            elif isinstance(value, list):
-                return [process_value(item, context) for item in value]
-            else:
-                return value
-        
-        # First pass: create a context with all top-level variables
-        rendered_vars = {}
-        
-        # Process all values, using accumulated context
-        for key, value in variables.items():
-            rendered_value = process_value(value, variables)
-            rendered_vars[key] = rendered_value
-        
-        # Second pass: re-render to handle cross-references
-        final_vars = {}
-        for key, value in rendered_vars.items():
-            final_value = process_value(value, rendered_vars)
-            final_vars[key] = final_value
-        
-        logger.info(f"Successfully rendered Jinja2 templates for {len(final_vars)} variables")
-        return final_vars
-    except Exception as e:
-        logger.error(f"Error rendering Jinja2 templates: {str(e)}")
-        raise
-
-
-def load_yaml_vars(yaml_file_path: str) -> Dict:
-    """Load variables from a YAML file and render Jinja2 templates"""
-    try:
-        logger.info(f"Loading variables from YAML file: {yaml_file_path}")
-        with open(yaml_file_path, 'r') as f:
-            variables = yaml.safe_load(f)
-        if variables is None:
-            variables = {}
-        
-        logger.info(f"Loaded {len(variables)} variables from {yaml_file_path}")
-        
-        # Render Jinja2 templates in the variables
-        rendered_variables = render_jinja2_variables(variables)
-        
-        logger.info(f"Successfully loaded and rendered {len(rendered_variables)} variables")
-        return rendered_variables
-    except Exception as e:
-        logger.error(f"Error loading YAML file {yaml_file_path}: {str(e)}")
-        raise
-
-
 async def execute_ansible_playbook(
     playbook_path: str,
     inventory_path: str,
-    extra_vars: Optional[Dict] = None
+    extra_vars: Optional[Dict] = None,
+    tmpdir: Optional[str] = None
 ) -> Dict:
-    """Execute Ansible playbook and capture output"""
+    """
+    Execute Ansible playbook and capture output
+    
+    If extra_vars contains complex types (dicts), they will be saved to a vars file
+    and passed to ansible using -e @varsfile.yml
+    """
     execution_id = str(uuid.uuid4())[:8]
     logger.info(f"[{execution_id}] Starting playbook execution")
     
@@ -182,8 +63,22 @@ async def execute_ansible_playbook(
         
         # Add extra vars if provided
         if extra_vars:
-            for key, value in extra_vars.items():
-                command.extend(["-e", f"{key}={value}"])
+            # Check if any value is a dict (complex type)
+            has_complex_types = any(isinstance(v, dict) for v in extra_vars.values())
+            
+            if has_complex_types or tmpdir:
+                # Use vars file approach for complex types
+                vars_file = os.path.join(tmpdir or "", "vars.yml") if tmpdir else "/tmp/ansible_vars.yml"
+                logger.info(f"[{execution_id}] Writing variables to {vars_file}")
+                
+                with open(vars_file, 'w') as f:
+                    yaml.dump(extra_vars, f, default_flow_style=False)
+                
+                command.extend(["-e", f"@{vars_file}"])
+            else:
+                # Simple scalar values - use key=value format
+                for key, value in extra_vars.items():
+                    command.extend(["-e", f"{key}={value}"])
         
         logger.info(f"[{execution_id}] Running command: {' '.join(command)}")
         
@@ -272,33 +167,12 @@ async def run_jcl(
             logger.info(f"[{job_id}] Downloading JCL file from S3: {jcl_s3_path}")
             download_from_s3(S3_BUCKET, jcl_s3_path, jcl_local)
             
-            # Download var.yml from S3 if it exists
-            var_s3_path = f"{s3_prefix}var.yml".lstrip("/")
-            var_local = os.path.join(tmpdir, "var.yml")
-            var_data = {}
-            
-            try:
-                logger.info(f"[{job_id}] Downloading variables from S3: {var_s3_path}")
-                download_from_s3(S3_BUCKET, var_s3_path, var_local)
-                var_data = load_yaml_vars(var_local)
-                logger.info(f"[{job_id}] Loaded variables from var.yml: {list(var_data.keys())}")
-            except Exception as e:
-                logger.warning(f"[{job_id}] Could not load var.yml (optional): {str(e)}")
-            
-            # Merge var.yml variables with extra_vars (extra_vars takes precedence)
-            if extra_vars is None:
-                extra_vars = {}
-            merged_vars = {**var_data, **extra_vars}
-            merged_vars["jcl_file"] = jcl_local
-            
-            logger.info(f"[{job_id}] Final variables: {list(merged_vars.keys())}")
-            
             # Execute ansible-playbook
             logger.info(f"[{job_id}] Executing ansible-playbook")
             execution_result = await execute_ansible_playbook(
                 playbook_local,
                 inventory_local,
-                merged_vars
+                tmpdir  # Pass tmpdir so vars can be written there
             )
             
             return JSONResponse({
