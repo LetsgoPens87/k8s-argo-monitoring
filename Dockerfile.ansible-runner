@@ -1,0 +1,17 @@
+FROM python:3.11-slim
+
+RUN pip install --no-cache-dir \
+    ansible-runner \
+    ansible-core \
+    requests   # for future metrics if needed
+
+# Install IBM z/OS collection (barebones – will expand later)
+RUN ansible-galaxy collection install ibm.ibm_zos_core
+
+WORKDIR /runner
+
+# Copy your ansible content (will be overridden by ConfigMap/volume in Job)
+COPY ansible/ /runner/
+
+# Simple entrypoint for testing
+CMD ["ansible-runner", "run", "/runner", "-p", "playbooks/run-jcl.yaml"]
