@@ -43,7 +43,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: apps/automation-api/app          # ← this folder contains your dockerfile + main.py + requirements.txt
-          file: apps/automation-api/app/dockerfile  # ← explicit path to your lowercase-named file
+          file: apps/automation-api/app/Dockerfile  # ← explicit path to your lowercase-named file
           push: true
           tags: |
             dhricko9/automation-api:${{ env.TAG_NAME }}
