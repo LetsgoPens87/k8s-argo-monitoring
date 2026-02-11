@@ -48,19 +48,22 @@ async def execute_ansible_playbook(
     """
     Execute Ansible playbook and capture output
     
-    If extra_vars contains complex types (dicts), they will be saved to a vars file
+    If extra_vars contains complex types (dicts), they will be saved to a varsfile
     and passed to ansible using -e @varsfile.yml
     """
     execution_id = str(uuid.uuid4())[:8]
     logger.info(f"[{execution_id}] Starting playbook execution")
     
     try:
+        # Build extra vars string to set remote_tmp and disable host key checking
+        extra_vars = "ansible_remote_tmp=/tmp/ansible_tmp ansible_ssh_common_args='-o StrictHostKeyChecking=no'"
+        
         # Build ansible-playbook command
         command = [
             "ansible-playbook",
             "-i", inventory_path,
             playbook_path,
-            "-e", f"ansible_ssh_common_args='-o StrictHostKeyChecking=no'"
+            "-e", extra_vars
         ]
         
         # Execute the playbook
@@ -68,7 +71,7 @@ async def execute_ansible_playbook(
             command,
             capture_output=True,
             text=True,
-            timeout=1800  # 30 minute timeout
+            timeout=1800  # 30-minute timeout
         )
         
         success = result.returncode == 0
@@ -83,10 +86,10 @@ async def execute_ansible_playbook(
         }
     
     except subprocess.TimeoutExpired:
-        logger.error(f"[{execution_id}] Playbook execution timed out")
+        logger.error(f"[{execution_id}] Playbook timed out")
         raise HTTPException(
             status_code=408,
-            detail="Playbook execution timed out after 30 minutes"
+            detail="Playbook timed out after 30 minutes"
         )
     except Exception as e:
         logger.error(f"[{execution_id}] Error executing playbook: {str(e)}")
