@@ -5,6 +5,7 @@ import boto3
 import subprocess
 import tempfile
 import os
+import stat
 import shutil
 import logging
 import yaml
@@ -104,7 +105,7 @@ async def run_jcl(
             logger.info(f"[{job_id}] Created temporary directory: {tmpdir}")
 
             # Download playbook
-            playbook_s3_path = f"{s3_prefix}{playbook_name}".lstrip("/")
+            playbook_s3_path = f"{s3_prefix}ansible/{playbook_name}".lstrip("/")
             playbook_local = os.path.join(tmpdir, os.path.basename(playbook_name))
             download_from_s3(S3_BUCKET, playbook_s3_path, playbook_local)
 
@@ -123,11 +124,9 @@ async def run_jcl(
             local_key_path = os.path.join(tmpdir, "mainframe_key.pem")
             download_from_s3(S3_BUCKET, key_s3_path, local_key_path)
 
-            # Read the private key content
-            with open(local_key_path, 'r') as f:
-                private_key_content = f.read()
+            os.chmod(local_key_path, stat.S_IRUSR | stat.S_IWUSR)
 
-            # Generate dynamic inventory with embedded private key
+            # Generate dynamic inventory referencing the private key file
             import yaml
             inventory_dict = {
                 'all': {
@@ -138,7 +137,7 @@ async def run_jcl(
                                     'ansible_host': '67.217.62.83',  # your host
                                     'ansible_user': 'GAMA12',
                                     'ansible_python_interpreter': '/usr/lpp/IBM/cyp/v3r11/pyz/bin/python',
-                                    'ansible_ssh_private_key': private_key_content
+                                    'ansible_ssh_private_key_file': local_key_path
                                 }
                             }
                         }
@@ -146,10 +145,11 @@ async def run_jcl(
                 }
             }
 
-            # Save the dynamic inventory
+            # Save the generated inventory
             inventory_path = os.path.join(tmpdir, 'inventory.yml')
             with open(inventory_path, 'w') as f:
                 yaml.dump(inventory_dict, f)
+
 
             target_dir = os.path.join(os.getcwd(), "../jcl")
             os.makedirs(target_dir, exist_ok=True)
