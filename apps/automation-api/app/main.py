@@ -59,7 +59,8 @@ async def execute_ansible_playbook(
         command = [
             "ansible-playbook",
             "-i", inventory_path,
-            playbook_path
+            playbook_path,
+            "-e", f"ansible_ssh_common_args='-o StrictHostKeyChecking=no'"
         ]
         
         # Execute the playbook
@@ -94,8 +95,8 @@ async def execute_ansible_playbook(
 # JCL Endpoint
 @app.post("/run-jcl")
 async def run_jcl(
-    playbook_name: str = "ansible/create_hamlet_jcl.yml",
-    inventory_name: str = "inventory.yml",
+    playbook_name: str = "create_hamlet_jcl.yml",
+    #inventory_name: str = "inventory.yml",
     jcl_file: str = "GENER3",
     s3_prefix: str = "",
 ):
@@ -110,9 +111,9 @@ async def run_jcl(
             download_from_s3(S3_BUCKET, playbook_s3_path, playbook_local)
 
             # Download inventory
-            inventory_s3_path = f"{s3_prefix}{inventory_name}".lstrip("/")
-            inventory_local = os.path.join(tmpdir, inventory_name)
-            download_from_s3(S3_BUCKET, inventory_s3_path, inventory_local)
+            #inventory_s3_path = f"{s3_prefix}{inventory_name}".lstrip("/")
+            #inventory_local = os.path.join(tmpdir, inventory_name)
+            #download_from_s3(S3_BUCKET, inventory_s3_path, inventory_local)
 
             # Download JCL file
             jcl_s3_path = f"{s3_prefix}jcl/{jcl_file}".lstrip("/")
@@ -126,8 +127,6 @@ async def run_jcl(
 
             os.chmod(local_key_path, stat.S_IRUSR | stat.S_IWUSR)
 
-            # Generate dynamic inventory referencing the private key file
-            import yaml
             inventory_dict = {
                 'all': {
                     'children': {
