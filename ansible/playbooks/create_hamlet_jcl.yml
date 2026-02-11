@@ -20,6 +20,7 @@
       PATH: "/usr/lpp/IBM/zoautil/bin:/usr/lpp/IBM/cyp/v3r11/pyz/bin:/bin:/var/bin"
       STEPLIB: "SYS1.SIEALNKE:CEE.SCEERUN:CEE.SCEERUN2"
       _BPXK_JOBLOG: "STDERR"
+      PYTHONSTDINENCODING: "cp1047"
     src: 'GAMA12.JCL(GENER3)'
     acceptable_cond_code: 4
 
@@ -29,6 +30,9 @@
     - name: Create JCL dataset with embedded content
       ibm.ibm_zos_core.zos_copy:
         dest: "{{ src }}"
+        encoding:
+          from: UTF-8
+          to: IBM-1047
         content: |
           //GAMA12JJ JOB ,'HAMLET',CLASS=A,
           //    MSGCLASS=X,
@@ -57,7 +61,7 @@
           //SYSUT1   DD *
           To die: To sleep; no more.
           And by a sleep we say to end the heart-ache
-          The thousand natural shocks that flesh is hier to,
+          The thousand natural shocks that flesh is heir to,
           'tis a consummation devoutly to be wished.
           /*
 

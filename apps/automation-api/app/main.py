@@ -144,7 +144,7 @@ async def run_jcl(
                                     'ansible_connection': 'ssh',
                                     'ansible_ssh_private_key_file': local_key_path,
                                     'ansible_ssh_common_args': '-o StrictHostKeyChecking=no',
-                                    'ansible_python_interpreter': '/usr/lpp/IBM/cyp/v3r11/pyz/bin/python3',
+                                    'ansible_python_interpreter': 'env PYTHONSTDINENCODING=cp1047 /usr/lpp/IBM/cyp/v3r11/pyz/bin/python3',
                                     'ansible_pipelining': True,
                                     'ansible_remote_tmp': '/tmp/ansible-gama12'
                                 }
