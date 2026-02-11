@@ -98,69 +98,68 @@ async def run_jcl(
     jcl_file: str = "GENER3",
     s3_prefix: str = "",
 ):
-    """
-    Run an Ansible playbook downloaded from S3, along with JCL file and variables
-    
-    Parameters:
-    - playbook_name: Name of the playbook file in S3 (e.g., ansible/create_hamlet_jcl.yml)
-    - inventory_name: Name of the inventory file in S3 (e.g., inventory.yml)
-    - jcl_file: JCL file name in jcl/ folder (e.g., GENER3)
-    - s3_prefix: S3 path prefix (e.g., "ansible-files/") - optional
-    - extra_vars: Extra variables to pass to ansible-playbook (e.g., {"target_host": "zos1"})
-    
-    Note: Automatically loads var.yml from S3 bucket root if it exists.
-    Variables from var.yml are passed to the playbook as environment_vars and other variables.
-    extra_vars parameter takes precedence over var.yml values.
-    """
     job_id = str(uuid.uuid4())[:8]
-    
     try:
-            # Create temporary directory for downloaded files
         with tempfile.TemporaryDirectory() as tmpdir:
             logger.info(f"[{job_id}] Created temporary directory: {tmpdir}")
 
-            # Create subdirectories to maintain structure
-            jcl_tmpdir = os.path.join(tmpdir, "jcl")
-            os.makedirs(jcl_tmpdir, exist_ok=True)
-
-            # Construct S3 paths
+            # Download playbook
             playbook_s3_path = f"{s3_prefix}{playbook_name}".lstrip("/")
-            inventory_s3_path = f"{s3_prefix}{inventory_name}".lstrip("/")
-            jcl_s3_path = f"{s3_prefix}jcl/{jcl_file}".lstrip("/")
-
-            # Local paths
             playbook_local = os.path.join(tmpdir, os.path.basename(playbook_name))
-            inventory_local = os.path.join(tmpdir, inventory_name)
-            jcl_local = os.path.join(jcl_tmpdir, jcl_file)
-
-            # Download playbook from S3
-            logger.info(f"[{job_id}] Downloading playbook from S3: {playbook_s3_path}")
             download_from_s3(S3_BUCKET, playbook_s3_path, playbook_local)
 
-            # Download inventory from S3
-            logger.info(f"[{job_id}] Downloading inventory from S3: {inventory_s3_path}")
+            # Download inventory
+            inventory_s3_path = f"{s3_prefix}{inventory_name}".lstrip("/")
+            inventory_local = os.path.join(tmpdir, inventory_name)
             download_from_s3(S3_BUCKET, inventory_s3_path, inventory_local)
 
-            # Download JCL file from S3
-            logger.info(f"[{job_id}] Downloading JCL file from S3: {jcl_s3_path}")
+            # Download JCL file
+            jcl_s3_path = f"{s3_prefix}jcl/{jcl_file}".lstrip("/")
+            jcl_local = os.path.join(tmpdir, jcl_file)
             download_from_s3(S3_BUCKET, jcl_s3_path, jcl_local)
 
-            # Copy the JCL file to where the playbook expects it
-            target_dir = os.path.join(os.getcwd(), "../jcl")
-            os.makedirs(target_dir, exist_ok=True)
-            target_path = os.path.join(target_dir, jcl_file)
+            # Download the private key from S3
+            key_s3_path = "mainframe_key.pem"  # Adjust if necessary
+            local_key_path = os.path.join(tmpdir, "mainframe_key.pem")
+            download_from_s3(S3_BUCKET, key_s3_path, local_key_path)
 
-            shutil.copy(jcl_local, target_path)
-            logger.info(f"[{job_id}] Copied JCL to {target_path}")
+            # Read the private key content
+            with open(local_key_path, 'r') as f:
+                private_key_content = f.read()
 
-            # Now run your playbook
+            # Generate dynamic inventory with embedded private key
+            import yaml
+            inventory_dict = {
+                'all': {
+                    'children': {
+                        'zos': {
+                            'hosts': {
+                                'mainframe': {
+                                    'ansible_host': '67.217.62.83',  # your host
+                                    'ansible_user': 'GAMA12',
+                                    'ansible_python_interpreter': '/usr/lpp/IBM/cyp/v3r11/pyz/bin/python',
+                                    'ansible_ssh_private_key': private_key_content
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            # Save dynamic inventory
+            inventory_path = os.path.join(tmpdir, 'inventory.yml')
+            with open(inventory_path, 'w') as f:
+                yaml.dump(inventory_dict, f)
+
+            # Run the playbook with the generated inventory
             logger.info(f"[{job_id}] Executing ansible-playbook")
             execution_result = await execute_ansible_playbook(
                 playbook_local,
-                inventory_local,
-                tmpdir  # Pass tmpdir so vars can be written there
+                inventory_path,
+                tmpdir
             )
-            
+
+            # Return success response
             return JSONResponse({
                 "job_id": job_id,
                 "status": "completed",
@@ -175,7 +174,7 @@ async def run_jcl(
                 "stdout": execution_result["stdout"],
                 "stderr": execution_result["stderr"]
             })
-    
+
     except HTTPException:
         raise
     except Exception as e:
