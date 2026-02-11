@@ -169,7 +169,7 @@ async def run_jcl(
                 "job_id": job_id,
                 "status": "completed",
                 "playbook": playbook_name,
-                "inventory": inventory_name,
+                #"inventory": inventory_name,
                 "jcl_file": jcl_file,
                 "jcl_local_path": jcl_local,
                 "s3_bucket": S3_BUCKET,
