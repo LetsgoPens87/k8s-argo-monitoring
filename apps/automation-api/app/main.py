@@ -119,7 +119,7 @@ async def run_jcl(
             download_from_s3(S3_BUCKET, jcl_s3_path, jcl_local)
 
             # Download the private key from S3
-            key_s3_path = "mainframe_key.pem"  # Adjust if necessary
+            key_s3_path = "mainframe_key.pem"  # Adjust as needed
             local_key_path = os.path.join(tmpdir, "mainframe_key.pem")
             download_from_s3(S3_BUCKET, key_s3_path, local_key_path)
 
@@ -146,10 +146,16 @@ async def run_jcl(
                 }
             }
 
-            # Save dynamic inventory
+            # Save the dynamic inventory
             inventory_path = os.path.join(tmpdir, 'inventory.yml')
             with open(inventory_path, 'w') as f:
                 yaml.dump(inventory_dict, f)
+
+            target_dir = os.path.join(os.getcwd(), "../jcl")
+            os.makedirs(target_dir, exist_ok=True)
+            target_path = os.path.join(target_dir, jcl_file)
+            shutil.copy(jcl_local, target_path)
+            logger.info(f"[{job_id}] Copied JCL to {target_path}")
 
             # Run the playbook with the generated inventory
             logger.info(f"[{job_id}] Executing ansible-playbook")
