@@ -11,7 +11,7 @@
       ibm.ibm_zos_core.zos_job_submit:
         src: "{{ playbook_dir }}/GENER3"
         location: LOCAL
-        wait_time_s: 60
+        wait_time_s: 30
         return_output: true
       register: job_output
 
