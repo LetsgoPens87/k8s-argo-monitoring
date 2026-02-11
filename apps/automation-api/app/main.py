@@ -42,7 +42,6 @@ def download_from_s3(bucket: str, s3_path: str, local_path: str) -> bool:
 async def execute_ansible_playbook(
     playbook_path: str,
     inventory_path: str,
-    extra_vars: Optional[Dict] = None,
     tmpdir: Optional[str] = None
 ) -> Dict:
     """
@@ -61,27 +60,6 @@ async def execute_ansible_playbook(
             "-i", inventory_path,
             playbook_path
         ]
-        
-        # Add extra vars if provided
-        if extra_vars:
-            # Check if any value is a dict (complex type)
-            has_complex_types = any(isinstance(v, dict) for v in extra_vars.values())
-            
-            if has_complex_types or tmpdir:
-                # Use vars file approach for complex types
-                vars_file = os.path.join(tmpdir or "", "vars.yml") if tmpdir else "/tmp/ansible_vars.yml"
-                logger.info(f"[{execution_id}] Writing variables to {vars_file}")
-                
-                with open(vars_file, 'w') as f:
-                    yaml.dump(extra_vars, f, default_flow_style=False)
-                
-                command.extend(["-e", f"@{vars_file}"])
-            else:
-                # Simple scalar values - use key=value format
-                for key, value in extra_vars.items():
-                    command.extend(["-e", f"{key}={value}"])
-        
-        logger.info(f"[{execution_id}] Running command: {' '.join(command)}")
         
         # Execute the playbook
         result = subprocess.run(
@@ -119,7 +97,6 @@ async def run_jcl(
     inventory_name: str = "inventory.yml",
     jcl_file: str = "GENER3",
     s3_prefix: str = "",
-    extra_vars: Optional[Dict] = None
 ):
     """
     Run an Ansible playbook downloaded from S3, along with JCL file and variables
