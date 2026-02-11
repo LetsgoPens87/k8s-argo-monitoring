@@ -9,6 +9,7 @@ import stat
 import shutil
 import logging
 import yaml
+import paramiko  # Added for SSH/SFTP operations
 from jinja2 import Environment, BaseLoader
 from pathlib import Path
 from typing import Optional, Dict
@@ -109,7 +110,6 @@ pipelining = True
 @app.post("/run-jcl")
 async def run_jcl(
     playbook_name: str = "create_hamlet_jcl.yml",
-    #inventory_name: str = "inventory.yml",
     jcl_file: str = "GENER3",
     s3_prefix: str = "",
 ):
@@ -123,11 +123,6 @@ async def run_jcl(
             playbook_local = os.path.join(tmpdir, os.path.basename(playbook_name))
             download_from_s3(S3_BUCKET, playbook_s3_path, playbook_local)
 
-            # Download inventory
-            #inventory_s3_path = f"{s3_prefix}{inventory_name}".lstrip("/")
-            #inventory_local = os.path.join(tmpdir, inventory_name)
-            #download_from_s3(S3_BUCKET, inventory_s3_path, inventory_local)
-
             # Download JCL file
             jcl_s3_path = f"{s3_prefix}jcl/{jcl_file}".lstrip("/")
             jcl_local = os.path.join(tmpdir, jcl_file)
@@ -137,16 +132,16 @@ async def run_jcl(
             key_s3_path = "mainframe_key.pem"  # Adjust as needed
             local_key_path = os.path.join(tmpdir, "mainframe_key.pem")
             download_from_s3(S3_BUCKET, key_s3_path, local_key_path)
-
             os.chmod(local_key_path, stat.S_IRUSR | stat.S_IWUSR)
 
+            # Generate inventory dictionary
             inventory_dict = {
                 'all': {
                     'children': {
                         'zos': {
                             'hosts': {
                                 'mainframe': {
-                                    'ansible_host': '67.217.62.83',  # your host
+                                    'ansible_host': '67.217.62.83',
                                     'ansible_user': 'GAMA12',
                                     'ansible_python_interpreter': '/usr/lpp/IBM/cyp/v3r11/pyz/bin/python',
                                     'ansible_ssh_private_key_file': local_key_path
@@ -157,17 +152,31 @@ async def run_jcl(
                 }
             }
 
-            # Save the generated inventory
+            # Save inventory
             inventory_path = os.path.join(tmpdir, 'inventory.yml')
             with open(inventory_path, 'w') as f:
                 yaml.dump(inventory_dict, f)
 
-
+            # Copy JCL to local target directory (optional)
             target_dir = os.path.join(os.getcwd(), "../jcl")
             os.makedirs(target_dir, exist_ok=True)
             target_path = os.path.join(target_dir, jcl_file)
             shutil.copy(jcl_local, target_path)
-            logger.info(f"[{job_id}] Copied JCL to {target_path}")
+
+            # --- NEW: Upload JCL to remote host ---
+            # Establish SSH connection
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            ssh.connect(hostname='67.217.62.83', username='GAMA12', key_filename=local_key_path)
+
+            # Create remote directory
+            ssh.exec_command(f'mkdir -p /tmp/jcl')
+
+            # Upload the JCL file
+            sftp = ssh.open_sftp()
+            sftp.put(jcl_local, f"/tmp/jcl/{jcl_file}")
+            sftp.close()
+            ssh.close()
 
             # Run the playbook with the generated inventory
             logger.info(f"[{job_id}] Executing ansible-playbook")
@@ -182,7 +191,6 @@ async def run_jcl(
                 "job_id": job_id,
                 "status": "completed",
                 "playbook": playbook_name,
-                #"inventory": inventory_name,
                 "jcl_file": jcl_file,
                 "jcl_local_path": jcl_local,
                 "s3_bucket": S3_BUCKET,
