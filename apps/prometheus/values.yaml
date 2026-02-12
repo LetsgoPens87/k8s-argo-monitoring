@@ -40,6 +40,16 @@ prometheus:
   # Scrape automation-api in namespace api so it appears in Prometheus
   # Option A: add to scrapeConfigs map (merged with chart defaults)
   scrapeConfigs:
+    argocd-metrics:
+      enabled: true
+      job_name: argocd-metrics
+      metrics_path: /metrics
+      static_configs:
+        - targets:
+            - argocd-metrics.argocd.svc.cluster.local:8082
+          labels:
+            namespace: argocd
+            service: argocd-metrics
     automation-api:
       enabled: true
       job_name: automation-api
