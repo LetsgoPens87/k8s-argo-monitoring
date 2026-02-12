@@ -22,6 +22,56 @@ ANSIBLE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ansible"
 _last_jcl_run: dict | None = None
 
 
+@app.get("/health")
+def health():
+    """Simple liveness/readiness for Kubernetes probes and load balancers. No Ansible."""
+    return {"status": "ok"}
+
+
+@app.get("/ready")
+def ready(check_zos: bool = False):
+    """
+    Readiness: check that the API can reach critical dependencies.
+    - Ansible dir and required files (playbook, inventory) must be present.
+    - If check_zos=true, also run z/OS ping (stricter, slower).
+    """
+    checks = {}
+    ansible_dir_ok = os.path.isdir(ANSIBLE_DIR)
+    checks["ansible_dir"] = ansible_dir_ok
+    playbook_ok = os.path.isfile(os.path.join(ANSIBLE_DIR, "create_hamlet_jcl.yml"))
+    checks["playbook"] = playbook_ok
+    inventory_ok = os.path.isfile(os.path.join(ANSIBLE_DIR, "zos.yaml"))
+    checks["inventory"] = inventory_ok
+    if not (ansible_dir_ok and playbook_ok and inventory_ok):
+        raise HTTPException(
+            status_code=503,
+            detail={"ready": False, "checks": checks, "message": "Missing Ansible dir or required files"},
+        )
+    if check_zos:
+        try:
+            out, err, rc = ansible_runner.run_command(
+                executable_cmd="ansible-playbook",
+                cmdline_args=["ping.yml", "-i", "zos.yaml"],
+                host_cwd=ANSIBLE_DIR,
+            )
+            zos_ok = rc == 0 if rc is not None else False
+            checks["zos_ping"] = zos_ok
+            if not zos_ok:
+                raise HTTPException(
+                    status_code=503,
+                    detail={"ready": False, "checks": checks, "message": "z/OS ping failed"},
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning("ready: z/OS ping failed: %s", e)
+            raise HTTPException(
+                status_code=503,
+                detail={"ready": False, "checks": {**checks, "zos_ping": False}, "message": str(e)},
+            )
+    return {"status": "ok", "ready": True, "checks": checks}
+
+
 @app.get("/ping")
 def ping():
     try:
