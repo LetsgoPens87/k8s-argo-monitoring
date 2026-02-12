@@ -37,10 +37,12 @@ prometheus:
         cpu: 500m
         memory: 1Gi
 
-  # Scrape automation-api (namespace api). Using extraScrapeConfigs so the chart
-  # appends this directly to scrape_configs; scrapeConfigs map was not making it into the live config.
-  extraScrapeConfigs: |
-    - job_name: automation-api
+  # Scrape automation-api in namespace api so it appears in Prometheus
+  # Option A: add to scrapeConfigs map (merged with chart defaults)
+  scrapeConfigs:
+    automation-api:
+      enabled: true
+      job_name: automation-api
       metrics_path: /metrics
       static_configs:
         - targets:
@@ -48,3 +50,15 @@ prometheus:
           labels:
             namespace: api
             service: automation-api
+
+  # Option B: if the job still doesn't appear in the ConfigMap, uncomment below.
+  # extraScrapeConfigs is appended directly to scrape_configs by the chart.
+  # extraScrapeConfigs: |
+  #   - job_name: automation-api
+  #     metrics_path: /metrics
+  #     static_configs:
+  #       - targets:
+  #           - automation-api.api.svc.cluster.local:80
+  #         labels:
+  #           namespace: api
+  #           service: automation-api
