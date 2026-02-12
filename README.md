@@ -73,6 +73,13 @@ kubectl get applications -n argocd
 
 ## 5. Get Endpoints
 
+### Prometheus
+```bash
+kubectl get svc -n prometheus -l app.kubernetes.io/name=prometheus -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'
+```
+Or list services and use the one of type LoadBalancer: `kubectl get svc -n prometheus`. Open `http://<hostname>/` for the UI; **Status → Configuration** shows the running config.  
+**Note:** The LoadBalancer hostname can change after a redeploy or namespace change (e.g. switching from `monitoring` to `prometheus`). If the old URL returns "site can't be reached" or DNS_PROBE_FINISHED_NXDOMAIN, run the command above to get the current URL.
+
 ### Grafana
 ```bash
 kubectl get svc grafana-lb -n grafana -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
