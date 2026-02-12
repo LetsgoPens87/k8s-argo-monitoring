@@ -1,9 +1,10 @@
-//GAMA12JJ JOB ,'HAMLET',CLASS=A,
-//    MSGCLASS=X,
-//    MSGLEVEL=(1,1),
-//    NOTIFY=&SYSUID
+//GAMA12HH JOB ,'HAMLET',CLASS=A,
+//         MSGCLASS=X,
+//         MSGLEVEL=(1,1),
+//         NOTIFY=&SYSUID
 //SOLIL1   EXEC PGM=IEBGENER
 //SYSIN    DD DUMMY
+//SYSOUT   DD SYSOUT=*
 //SYSPRINT DD SYSOUT=*
 //SYSUT1   DD *
 To be, or not to be, that is the question:
@@ -12,14 +13,23 @@ The slings and arrows of outrageous fortune
 Or to take arms against a sea of troubles
 And by opposing, end them.
 /*
-//SYSUT2   DD SYSOUT=*
+//SYSUT2   DD DSN=&SYSUID..TEST.GDG(+1),
+//            DCB=&SYSUID..MODEL.DSCB80,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(TRK,(1,1),RLSE),
+//            UNIT=SYSDA
 //SOLIL2   EXEC PGM=IEBGENER
 //SYSIN    DD DUMMY
+//SYSOUT   DD SYSOUT=*
 //SYSPRINT DD SYSOUT=*
 //SYSUT1   DD *
 To die: To sleep; no more.
 And by a sleep we say to end the heart-ache
-The thousand natural shocks that flesh is heir to,
+and the thousand natural shocks that flesh is hier to,
 'tis a consummation devoutly to be wished.
 /*
-//SYSUT2   DD SYSOUT=*
+//SYSUT2   DD DSN=&SYSUID..TEST.GDG(+2),
+//            DCB=&SYSUID..MODEL.DSCB80,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(TRK,(1,1),RLSE),
+//            UNIT=SYSDA
